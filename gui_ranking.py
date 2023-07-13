@@ -9,6 +9,7 @@ import numpy as np
 import plotly.express as px
 import calendar
 from openpyxl import load_workbook
+from datetime import datetime
 
 def assign_biweekly_period(date):
     if date.day <= 15:
@@ -104,9 +105,22 @@ def process_data():
         df_final[period + ' Organic Rank'] = pivot_or[period]
         df_final[period + ' Spend'] = pivot_spend[period + ' Spend']
 
+    # Break each period into its components
+    period_parts = [p.split(' ') for p in all_periods]
+    # Convert the month and year part back to a datetime
+    for parts in period_parts:
+        parts[1] = datetime.strptime(parts[1] + " " + parts[2], "%b %Y")
+    # Sort by the components
+    period_parts.sort(key=lambda x: (x[1], int(x[0].split('-')[0])))
+    # Convert the month and year part back to a string
+    for parts in period_parts:
+        parts[1] = parts[1].strftime("%b %Y")
+    # Join the parts back together (and remove the year part)
+    sorted_periods = [" ".join(parts[:-1]) for parts in period_parts]
+
     # Create the new order of columns
     new_order = []
-    for period in all_periods:
+    for period in sorted_periods:
         new_order.append(period + ' Organic Rank')
         new_order.append(period + ' Spend')
 
