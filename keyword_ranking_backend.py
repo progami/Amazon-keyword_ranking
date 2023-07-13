@@ -1,16 +1,17 @@
 import pandas as pd
 import numpy as np
 import calendar
-from openpyxl import load_workbook
 from datetime import datetime
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 
 def assign_biweekly_period(date):
     if date.day <= 15:
-        return f"1-15 {date.strftime('%b %Y')}"
+        return f"1-15 {date.strftime('%b %y')}"
     else:
         last_day = calendar.monthrange(date.year, date.month)[1]
-        return f"16-{last_day} {date.strftime('%b %Y')}"
+        return f"16-{last_day} {date.strftime('%b %y')}"
 
 def process_data():
     # Load the data
@@ -103,12 +104,12 @@ def process_data():
     period_parts = [p.split(' ') for p in all_periods]
     # Convert the month and year part back to a datetime
     for parts in period_parts:
-        parts[1] = datetime.strptime(parts[1] + " " + parts[2], "%b %Y")
+        parts[1] = datetime.strptime(parts[1] + " " + parts[2], "%b %y")
     # Sort by the components
     period_parts.sort(key=lambda x: (x[1], int(x[0].split('-')[0])))
     # Convert the month and year part back to a string
     for parts in period_parts:
-        parts[1] = parts[1].strftime("%b %Y")
+        parts[1] = parts[1].strftime("%b %y")
     # Join the parts back together (and remove the year part)
     sorted_periods = [" ".join(parts[:-1]) for parts in period_parts]
 

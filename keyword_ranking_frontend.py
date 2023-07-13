@@ -32,11 +32,13 @@ def create_app(df_final, avg_sv):
                     data=df_final.reset_index().to_dict('records'),
                     style_cell={
                         'textAlign': 'left',
-                        'padding': '5px'
+                        'padding': '5px',
                     },
                     style_header={
                         'fontWeight': 'bold',
                         'backgroundColor': 'lightgrey',
+                        'height': 'auto',
+                        'whitespace': 'normal',
                     },
                     style_data_conditional=[
                         {
