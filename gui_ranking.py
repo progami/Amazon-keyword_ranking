@@ -8,6 +8,14 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import calendar
+from openpyxl import load_workbook
+
+def assign_biweekly_period(date):
+    if date.day <= 15:
+        return f"1-15 {date.strftime('%b %Y')}"
+    else:
+        last_day = calendar.monthrange(date.year, date.month)[1]
+        return f"16-{last_day} {date.strftime('%b %Y')}"
 
 def process_data():
     # Load the data
@@ -22,16 +30,9 @@ def process_data():
 
     # Replace values greater than 306 with 306
     df['Organic Rank'] = df['Organic Rank'].apply(lambda x: 306 if x > 306 else x)
+
     # Convert 'Date Added' to datetime
     df['Date Added'] = pd.to_datetime(df['Date Added'])
-
-    # Function to assign each date to a bi-weekly period
-    def assign_biweekly_period(date):
-        if date.day <= 15:
-            return f"1-15 {date.strftime('%b %Y')}"
-        else:
-            last_day = calendar.monthrange(date.year, date.month)[1]
-            return f"16-{last_day} {date.strftime('%b %Y')}"
 
     # Assign each row to a bi-weekly period
     df['Bi-weekly Period'] = df['Date Added'].apply(assign_biweekly_period)
@@ -41,9 +42,6 @@ def process_data():
 
     # Replace '-' back to NaN for computations
     pivot_or.replace('-', np.nan, inplace=True)
-
-    # order the columns chronologically
-    pivot_or = pivot_or.reindex(sorted(pivot_or.columns, key=lambda x: pd.to_datetime(' '.join(x.split(' ')[1:]))), axis=1)
 
     # Create the pivot table for Search Volume
     pivot_sv = df.pivot_table(values='Search Volume', index='Keyword', columns='Bi-weekly Period', aggfunc='mean')
@@ -62,12 +60,65 @@ def process_data():
     pivot_or = pivot_or.round(1)
     pivot_or['Avg SV'] = pivot_or['Avg SV'].round(0)
 
-    return pivot_or
+    # Load the spend data
+    df_spend = pd.read_excel('Sponsored Products Search term report.xlsx')
+
+    # Convert 'Date' to datetime
+    df_spend['Date'] = pd.to_datetime(df_spend['Date'])
+
+    # Assign each row to a bi-weekly period
+    df_spend['Bi-weekly Period'] = df_spend['Date'].apply(assign_biweekly_period)
+
+    # Group by 'Customer Search Term' and 'Bi-weekly Period' and calculate the sum of 'Spend'
+    df_spend = df_spend.groupby(['Customer Search Term', 'Bi-weekly Period'])['Spend'].sum().reset_index()
+
+    # Create the pivot table for Spend
+    pivot_spend = df_spend.pivot(index='Customer Search Term', columns='Bi-weekly Period', values='Spend')
+
+    # Fill NaN values with 0
+    pivot_spend.fillna(0, inplace=True)
+
+    # Append ' Spend' to the column names
+    pivot_spend.columns = [c + ' Spend' for c in pivot_spend.columns]
+
+    # Round to 0 decimal places
+    pivot_spend = pivot_spend.round(0)
+
+    # Ensure all keywords have an entry in avg_sv
+    all_keywords = set(pivot_or.index).union(set(pivot_spend.index))
+    for keyword in all_keywords:
+        if keyword not in avg_sv:
+            avg_sv[keyword] = 0
+
+    # Ensure both pivot_or and pivot_spend have the same set of periods
+    all_periods = sorted(set(pivot_or.columns[:-1]).union(set(c.replace(' Spend', '') for c in pivot_spend.columns)))
+    for period in all_periods:
+        if period not in pivot_or.columns:
+            pivot_or[period] = np.nan
+        if period + ' Spend' not in pivot_spend.columns:
+            pivot_spend[period + ' Spend'] = 0
+
+    # Combine the two dataframes, alternating between Organic Rank and Spend for each period
+    df_final = pd.DataFrame(index=pivot_or.index)
+    for period in all_periods:
+        df_final[period + ' Organic Rank'] = pivot_or[period]
+        df_final[period + ' Spend'] = pivot_spend[period + ' Spend']
+
+    # Create the new order of columns
+    new_order = []
+    for period in all_periods:
+        new_order.append(period + ' Organic Rank')
+        new_order.append(period + ' Spend')
+
+    # Sort the columns in df_final
+    df_final = df_final[new_order]
+
+    return df_final, avg_sv
 
 
-def create_app(pivot_or):
+
+def create_app(df_final, avg_sv):
     app = dash.Dash(__name__, external_stylesheets=[dbc.themes.COSMO])  # cosmo theme from Bootswatch
-
     app.layout = dbc.Container([
         dbc.Row([
             dbc.Col([
@@ -79,15 +130,15 @@ def create_app(pivot_or):
             dbc.Col([
                 dcc.Checklist(
                     id='keywords-checklist',
-                    options=[{'label': f"{i} ({pivot_or.loc[i, 'Avg SV']:.0f})", 'value': i} for i in pivot_or.index],
-                    value=[pivot_or.index[0]],
+                    options=[{'label': f"{i} ({avg_sv[i]:.0f})", 'value': i} for i in df_final.index],
+                    value=[df_final.index[0]],
                 )
             ], width=2),
             dbc.Col([
                 dash_table.DataTable(
                     id='table',
-                    columns=[{"name": i, "id": i} for i in pivot_or.reset_index().columns],
-                    data=pivot_or.reset_index().to_dict('records'),
+                    columns=[{"name": i, "id": i} for i in df_final.reset_index().columns],
+                    data=df_final.reset_index().to_dict('records'),
                     style_cell={
                         'textAlign': 'left',
                         'padding': '5px'
@@ -121,10 +172,10 @@ def create_app(pivot_or):
         [Input('keywords-checklist', 'value')]
     )
     def update_graph(keywords):
-        data = pivot_or.loc[keywords].reset_index().melt(id_vars=['Keyword'], value_vars=pivot_or.columns[:-1], value_name='Organic Rank')
-        fig = px.line(data, x='Bi-weekly Period', y='Organic Rank', color='Keyword', hover_data={'Keyword':True, 'Bi-weekly Period': False, 'Organic Rank': True})
-
-        # Customize the appearance of the graph
+        or_columns = [col for col in df_final.columns if 'Organic Rank' in col]
+        data = df_final.loc[keywords].reset_index().melt(id_vars=['Keyword'], value_vars=or_columns, value_name='Organic Rank')
+        data['variable'] = data['variable'].str.replace(' Organic Rank', '')
+        fig = px.line(data, x='variable', y='Organic Rank', color='Keyword', hover_data={'Keyword':True, 'variable': False, 'Organic Rank': True})
         fig.update_layout(
             title='Organic Rank by Bi-weekly Period',
             xaxis_title='Bi-weekly Period',
@@ -150,9 +201,7 @@ def create_app(pivot_or):
     return app
 
 if __name__ == '__main__':
-    pivot_or = process_data()
-
-    app = create_app(pivot_or)
-
+    df_final, avg_sv = process_data()
+    app = create_app(df_final, avg_sv)
     app.run_server(debug=True, host='0.0.0.0')
 
